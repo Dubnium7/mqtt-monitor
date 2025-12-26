@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户使用次数监控</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; background-color: #f0f2f5; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h2 { margin-top: 0; color: #1a1a1a; border-bottom: 2px solid #eee; padding-bottom: 15px; }
+        
+        /* 状态栏 */
+        .status-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 14px; color: #666; }
+        .badge { padding: 4px 12px; border-radius: 20px; font-weight: bold; font-size: 12px; }
+        .connected { background: #e6fffa; color: #047857; border: 1px solid #a7f3d0; }
+        .disconnected { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
+
+        /* 数据显示区域 */
+        #data-display { 
+            min-height: 150px; 
+            max-height: 400px; 
+            overflow-y: auto; 
+            background: #fafafa; 
+            border: 1px dashed #ccc; 
+            border-radius: 8px; 
+            padding: 15px; 
+        }
+
+        /* 每一条合法的记录 */
+        .record-item { 
+            padding: 10px; 
+            margin-bottom: 10px; 
+            background: #fff; 
+            border-left: 4px solid #2196F3; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
+            animation: fadeIn 0.3s ease;
+        }
+        .record-time { color: #999; font-size: 12px; margin-bottom: 4px; }
+        .record-value { font-size: 18px; font-weight: bold; color: #333; }
+        
+        /* 无效数据样式 */
+        .invalid-item { opacity: 0.6; font-size: 12px; border-left-color: #999; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>📊 实时数据监控面板</h2>
+        
+        <div class="status-bar">
+            <span>主题: <b>wodun/xiaogua/test</b></span>
+            <span id="status" class="badge disconnected">● 未连接</span>
+        </div>
+
+        <div id="data-display">
+            <div style="text-align:center; color:#999; padding-top:20px;">等待数据中...</div>
+        </div>
+    </div>
+
+    <script>
+        // ================= 配置区域 =================
+        const config = {
+            host: 'broker.emqx.io',
+            port: 8084,
+            path: '/mqtt',
+            protocol: 'wss', // 加密连接
+            topic: 'wodun/xiaogua/test', // 你指定的独特Topic
+            prefix: '0753' // 校验前缀
+        };
+        // ===========================================
+
+        const statusEl = document.getElementById('status');
+        const displayDiv = document.getElementById('data-display');
+        let isFirstData = true;
+
+        // 初始化连接
+        const client = mqtt.connect(`${config.protocol}://${config.host}:${config.port}${config.path}`, {
+            clientId: 'monitor_' + Math.random().toString(16).substr(2, 8),
+            clean: true,
+            connectTimeout: 5000,
+        });
+
+        // 1. 连接成功
+        client.on('connect', () => {
+            statusEl.innerText = "● 已连接";
+            statusEl.className = "badge connected";
+            console.log("连接成功");
+
+            // 订阅主题
+            client.subscribe(config.topic, (err) => {
+                if (!err) {
+                    console.log(`订阅成功: ${config.topic}`);
+                }
+            });
+        });
+
+        // 2. 收到消息 (核心逻辑在这里)
+        client.on('message', (topic, message) => {
+            // 清除"等待数据中"的提示
+            if (isFirstData) {
+                displayDiv.innerHTML = '';
+                isFirstData = false;
+            }
+
+            const rawMsg = message.toString().trim(); // 去掉可能的空格
+            const time = new Date().toLocaleTimeString();
+
+            // === 核心校验逻辑 ===
+            if (rawMsg.startsWith(config.prefix)) {
+                // 如果是以 0753 开头
+                // 截取第4位之后的所有字符 (例如 0753123 -> 123)
+                const realValue = rawMsg.substring(config.prefix.length);
+                
+                // 显示到界面
+                addRecordToUi(time, realValue, true);
+            } else {
+                // 如果格式不对 (比如直接发了 123)
+                console.warn(`收到非法格式数据: ${rawMsg}`);
+                // 可选：也可以显示错误提示，或者直接忽略
+                addRecordToUi(time, `无效数据 (收到: ${rawMsg}, 缺少前缀0753)`, false);
+            }
+        });
+
+        // 3. 断开连接
+        client.on('close', () => {
+            statusEl.innerText = "● 已断开";
+            statusEl.className = "badge disconnected";
+        });
+
+        // 辅助函数：添加卡片到界面
+        function addRecordToUi(time, text, isValid) {
+            const div = document.createElement('div');
+            div.className = isValid ? 'record-item' : 'record-item invalid-item';
+            
+            if (isValid) {
+                div.innerHTML = `
+                    <div class="record-time">${time}</div>
+                    <div class="record-value">用户使用次数为：${text}次</div>
+                `;
+            } else {
+                div.innerHTML = `
+                    <div class="record-time">${time}</div>
+                    <div style="color:red;">⚠️ ${text}</div>
+                `;
+            }
+            
+            // 插入到最前面
+            displayDiv.insertBefore(div, displayDiv.firstChild);
+        }
+
+    </script>
+</body>
+</html>
