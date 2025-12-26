@@ -87,15 +87,17 @@
 
     <script>
         // ================= 配置区域 (请修改这里！) =================
-        const config = {
+    const config = {
             // MQTT 配置
             host: 'broker.emqx.io', port: 8084, path: '/mqtt', protocol: 'wss', 
             prefix: '0753', queryCmd: 'CMD:GET_COUNT',
             
-            // LeanCloud 数据库配置 (必须填入你申请的ID和Key)
+            // LeanCloud 数据库配置
             leanCloudAppId: "9db8g3FgWlYbkaRi0WbJbMXG-MdYXbMMI",
-            leanCloudAppKey: ":lcC1wwoirVV4VbPI0nK5majY",
-            leanCloudServerURL: "9db8g3fg.api.lncldglobal.com" // 国际版通常不用改，或者填 API 域名
+            // ❌ 原来是 ":lcC...", 请删掉开头的冒号
+            leanCloudAppKey: "lcC1wwoirVV4VbPI0nK5majY", 
+            // ❌ 原来没加 https://，必须加上！
+            leanCloudServerURL: "https://9db8g3fg.api.lncldglobal.com" 
         };
         // ========================================================
 
@@ -107,18 +109,21 @@
         let currentTopic = topicSelect.value;
         let client = null;
 
-        // 1. 初始化数据库
+// 1. 初始化数据库
         function initDB() {
             if (config.leanCloudAppId.includes("请在这里")) {
                 alert("请先在代码中填入 LeanCloud 的 AppID 和 AppKey！");
                 return false;
             }
+            
+            // 关键修改：这里不再写死地址，而是使用 config 里配置好的地址
             AV.init({
                 appId: config.leanCloudAppId,
                 appKey: config.leanCloudAppKey,
-                serverURL: "https://api.leancloud.cn" // 如果报错，可尝试删掉这一行
+                serverURL: config.leanCloudServerURL  // <--- 这里的变量名要对应 config 里的
             });
-            console.log("云数据库初始化完成");
+            
+            console.log("云数据库初始化尝试...");
             return true;
         }
 
