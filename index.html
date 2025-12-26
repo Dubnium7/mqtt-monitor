@@ -16,6 +16,31 @@
         .connected { background: #e6fffa; color: #047857; border: 1px solid #a7f3d0; }
         .disconnected { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
 
+        /* 查询按钮区域 */
+        .control-area {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px dashed #eee;
+            text-align: center;
+        }
+        .query-btn {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.3s;
+            box-shadow: 0 2px 5px rgba(33, 150, 243, 0.3);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .query-btn:hover { background-color: #1976D2; }
+        .query-btn:active { transform: translateY(1px); }
+        .query-btn:disabled { background-color: #ccc; cursor: not-allowed; box-shadow: none; }
+
         /* 数据显示区域 */
         #data-display { 
             min-height: 150px; 
@@ -27,7 +52,6 @@
             padding: 15px; 
         }
 
-        /* 每一条合法的记录 */
         .record-item { 
             padding: 10px; 
             margin-bottom: 10px; 
@@ -38,8 +62,7 @@
         }
         .record-time { color: #999; font-size: 12px; margin-bottom: 4px; }
         .record-value { font-size: 18px; font-weight: bold; color: #333; }
-        
-        /* 无效数据样式 */
+        .sent-msg { border-left-color: #4CAF50; background: #f1f8e9; } /* 发送的消息样式 */
         .invalid-item { opacity: 0.6; font-size: 12px; border-left-color: #999; }
 
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -51,12 +74,18 @@
         <h2>📊 实时数据监控面板</h2>
         
         <div class="status-bar">
-            <span>主题: <b>wodun/xiaogua/test</b></span>
+            <span>Topic: <b>wodun/xiaogua/test</b></span>
             <span id="status" class="badge disconnected">● 未连接</span>
         </div>
 
+        <div class="control-area">
+            <button id="queryBtn" class="query-btn" onclick="sendQueryCommand()" disabled>
+                🔍 查询最新数据
+            </button>
+        </div>
+
         <div id="data-display">
-            <div style="text-align:center; color:#999; padding-top:20px;">等待数据中...</div>
+            <div style="text-align:center; color:#999; padding-top:20px;">等待操作...</div>
         </div>
     </div>
 
@@ -66,19 +95,21 @@
             host: 'broker.emqx.io',
             port: 8084,
             path: '/mqtt',
-            protocol: 'wss', // 加密连接
-            topic: 'wodun/xiaogua/test', // 你指定的独特Topic
-            prefix: '0753' // 校验前缀
+            protocol: 'wss', 
+            topic: 'wodun/xiaogua/test', 
+            prefix: '0753',      // 接收数据的校验前缀
+            queryCmd: 'CMD:GET_COUNT' // 发送给MQTTX的查询指令
         };
         // ===========================================
 
         const statusEl = document.getElementById('status');
         const displayDiv = document.getElementById('data-display');
+        const queryBtn = document.getElementById('queryBtn');
         let isFirstData = true;
 
         // 初始化连接
         const client = mqtt.connect(`${config.protocol}://${config.host}:${config.port}${config.path}`, {
-            clientId: 'monitor_' + Math.random().toString(16).substr(2, 8),
+            clientId: 'web_' + Math.random().toString(16).substr(2, 8),
             clean: true,
             connectTimeout: 5000,
         });
@@ -87,70 +118,73 @@
         client.on('connect', () => {
             statusEl.innerText = "● 已连接";
             statusEl.className = "badge connected";
-            console.log("连接成功");
-
-            // 订阅主题
+            queryBtn.disabled = false; // 启用按钮
+            queryBtn.innerText = "🔍 查询最新数据";
+            
             client.subscribe(config.topic, (err) => {
-                if (!err) {
-                    console.log(`订阅成功: ${config.topic}`);
-                }
+                if (!err) console.log(`订阅成功: ${config.topic}`);
             });
         });
 
-        // 2. 收到消息 (核心逻辑在这里)
-        client.on('message', (topic, message) => {
-            // 清除"等待数据中"的提示
-            if (isFirstData) {
-                displayDiv.innerHTML = '';
-                isFirstData = false;
+        // 2. 发送查询指令 (点击按钮触发)
+        function sendQueryCommand() {
+            if (client && client.connected) {
+                // 发送数据
+                client.publish(config.topic, config.queryCmd);
+                
+                // 在界面上显示一条“已发送”的记录
+                addRecordToUi("发送指令", `已发送查询请求: ${config.queryCmd}`, "sent");
+            } else {
+                alert("当前未连接服务器，无法查询");
             }
+        }
 
-            const rawMsg = message.toString().trim(); // 去掉可能的空格
+        // 3. 收到消息
+        client.on('message', (topic, message) => {
+            if (isFirstData) { displayDiv.innerHTML = ''; isFirstData = false; }
+
+            const rawMsg = message.toString().trim();
             const time = new Date().toLocaleTimeString();
+
+            // 如果收到的是自己刚才发的查询指令，忽略它（或者显示出来以便调试）
+            if (rawMsg === config.queryCmd) {
+                return; 
+            }
 
             // === 核心校验逻辑 ===
             if (rawMsg.startsWith(config.prefix)) {
-                // 如果是以 0753 开头
-                // 截取第4位之后的所有字符 (例如 0753123 -> 123)
+                // 截取 0753 之后的数据
                 const realValue = rawMsg.substring(config.prefix.length);
-                
-                // 显示到界面
-                addRecordToUi(time, realValue, true);
+                addRecordToUi(time, `用户使用次数为：${realValue}次`, "recv");
             } else {
-                // 如果格式不对 (比如直接发了 123)
-                console.warn(`收到非法格式数据: ${rawMsg}`);
-                // 可选：也可以显示错误提示，或者直接忽略
-                addRecordToUi(time, `无效数据 (收到: ${rawMsg}, 缺少前缀0753)`, false);
+                addRecordToUi(time, `收到无效数据: ${rawMsg}`, "invalid");
             }
         });
 
-        // 3. 断开连接
+        client.on('error', (err) => { console.error(err); });
         client.on('close', () => {
             statusEl.innerText = "● 已断开";
             statusEl.className = "badge disconnected";
+            queryBtn.disabled = true;
+            queryBtn.innerText = "连接断开...";
         });
 
-        // 辅助函数：添加卡片到界面
-        function addRecordToUi(time, text, isValid) {
+        // 辅助函数：显示UI
+        function addRecordToUi(title, text, type) {
             const div = document.createElement('div');
-            div.className = isValid ? 'record-item' : 'record-item invalid-item';
+            let className = 'record-item';
             
-            if (isValid) {
-                div.innerHTML = `
-                    <div class="record-time">${time}</div>
-                    <div class="record-value">用户使用次数为：${text}次</div>
-                `;
-            } else {
-                div.innerHTML = `
-                    <div class="record-time">${time}</div>
-                    <div style="color:red;">⚠️ ${text}</div>
-                `;
-            }
+            if (type === 'sent') className += ' sent-msg'; // 发送的消息变绿
+            if (type === 'invalid') className += ' invalid-item'; // 无效变灰
             
-            // 插入到最前面
+            div.className = className;
+            div.innerHTML = `
+                <div class="record-time">${title}</div>
+                <div class="record-value" style="font-size: ${type==='recv'?'18px':'14px'}">${text}</div>
+            `;
+            
             displayDiv.insertBefore(div, displayDiv.firstChild);
         }
-
     </script>
 </body>
 </html>
